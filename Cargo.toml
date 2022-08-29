@@ -1,0 +1,7 @@
+[package]
+name = "trapez"
+version = "0.1.0"
+authors = ["André Rüdiger <andre.ruediger@gmail.com>"]
+edition = "2021"
+
+[dependencies]
