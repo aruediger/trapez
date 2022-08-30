@@ -5,10 +5,10 @@ use std::collections::{
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Error {
-    TransactionAlreadyExists(u16),
-    TransactionUnknown(u16),
-    TransactionUndisputed(u16),
-    TransactionAlreadyDisputed(u16),
+    TransactionAlreadyExists(u32),
+    TransactionUnknown(u32),
+    TransactionUndisputed(u32),
+    TransactionAlreadyDisputed(u32),
     InsufficientFunds,
     NegativeAmount(i64),
     Locked,
@@ -48,12 +48,12 @@ struct Account {
      *
      * This should eventually become bound either by size or some kind of age threshold.
      */
-    log: BTreeMap<u16, i64>,
+    log: BTreeMap<u32, i64>,
     /**
      * Set of disputed transactions. Could also be an attribute inside the transaction log but as
      * the number of disputes should stay small we don't waste space on every log entry.
      */
-    disputes: BTreeSet<u16>,
+    disputes: BTreeSet<u32>,
 }
 
 impl Account {
@@ -74,7 +74,7 @@ impl Account {
         self.available + self.held
     }
 
-    fn tx(&mut self, tx: u16, amount: i64) -> Result {
+    fn tx(&mut self, tx: u32, amount: i64) -> Result {
         match self.log.entry(tx) {
             Entry::Occupied(_) => Err(Error::TransactionAlreadyExists(tx)),
             Entry::Vacant(entry) => {
@@ -91,7 +91,7 @@ impl Account {
      *
      * Although the amount type is signed we only allow positive values.
      */
-    pub fn deposit(&mut self, tx: u16, amount: i64) -> Result {
+    pub fn deposit(&mut self, tx: u32, amount: i64) -> Result {
         if self.locked {
             return Err(Error::Locked);
         }
@@ -107,7 +107,7 @@ impl Account {
      *
      * Although the amount type is signed we only allow positive values.
      */
-    pub fn withdraw(&mut self, tx: u16, amount: i64) -> Result {
+    pub fn withdraw(&mut self, tx: u32, amount: i64) -> Result {
         if self.locked {
             return Err(Error::Locked);
         }
@@ -126,7 +126,7 @@ impl Account {
      * A dispute represents a client's claim that a transaction was erroneous and should be
      * reversed. The transaction shouldn't be reversed yet but the associated funds should be held.
      */
-    pub fn dispute(&mut self, tx: u16) -> Result {
+    pub fn dispute(&mut self, tx: u32) -> Result {
         if self.locked {
             return Err(Error::Locked);
         }
@@ -151,7 +151,7 @@ impl Account {
     /**
      * A resolve represents a resolution to a dispute, releasing the associated held funds.
      */
-    pub fn resolve(&mut self, tx: u16) -> Result {
+    pub fn resolve(&mut self, tx: u32) -> Result {
         if self.locked {
             return Err(Error::Locked);
         }
@@ -174,7 +174,7 @@ impl Account {
         }
     }
 
-    pub fn chargeback(&mut self, tx: u16) -> Result {
+    pub fn chargeback(&mut self, tx: u32) -> Result {
         if self.locked {
             return Err(Error::Locked);
         }
