@@ -26,23 +26,23 @@ impl std::fmt::Display for Error {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct Account {
+pub struct Account {
     /**
      * The total funds that are available for trading, staking, withdrawal, etc.
      *
      * Could be calculated on-demand from the log but stored here for efficient retrieval.
      */
-    available: i64,
+    pub available: i64,
     /**
      * The total funds that are held for dispute.
      *
      * Could be calculated on-demand from the log but stored here for efficient retrieval.
      */
-    held: i64,
+    pub held: i64,
     /**
      * Whether the account is locked.
      */
-    locked: bool,
+    pub locked: bool,
     /**
      * The log of deposits and withdrawels. We use i64 throughout in order to avoid conversions.
      *
