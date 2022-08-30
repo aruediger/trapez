@@ -3,7 +3,7 @@ use std::collections::{
     BTreeSet,
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
     TransactionAlreadyExists(u32),
     TransactionUnknown(u32),
@@ -25,7 +25,7 @@ impl std::fmt::Display for Error {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Account {
     /**
      * The total funds that are available for trading, staking, withdrawal, etc.
@@ -112,11 +112,11 @@ impl Account {
             return Err(Error::Locked);
         }
         if amount < 0 {
-            // If a client does not have sufficient available funds the withdrawal should fail and
-            // the total amount of funds should not change
             return Err(Error::NegativeAmount(amount));
         }
         if self.available < amount {
+            // If a client does not have sufficient available funds the withdrawal should fail and
+            // the total amount of funds should not change
             return Err(Error::InsufficientFunds);
         }
         self.tx(tx, -amount)

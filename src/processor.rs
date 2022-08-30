@@ -7,27 +7,46 @@ type Accounts = BTreeMap<u16, Account>;
 
 #[derive(Debug)]
 pub enum Error {
-    TransactionError(account::Error),
+    TransactionError { client: u16, err: account::Error },
     IoError(),
 }
 
 #[derive(Debug)]
 pub struct State {
-    client: u16,
-    available: i64,
-    held: i64,
-    total: i64,
-    locked: bool,
+    pub client: u16,
+    pub available: i64,
+    pub held: i64,
+    pub total: i64,
+    pub locked: bool,
 }
 
 #[derive(Debug)]
 pub enum Message {
-    Deposit { client: u16, tx: u32, amount: i64 },
-    Withdrawal { client: u16, tx: u32, amount: i64 },
-    Dispute { client: u16, tx: u32 },
-    Resolve { client: u16, tx: u32 },
-    Chargeback { client: u16, tx: u32 },
-    GetState { tx: oneshot::Sender<Vec<State>> }, // todo: return a stream instead
+    Deposit {
+        client: u16,
+        tx: u32,
+        amount: i64,
+    },
+    Withdrawal {
+        client: u16,
+        tx: u32,
+        amount: i64,
+    },
+    Dispute {
+        client: u16,
+        tx: u32,
+    },
+    Resolve {
+        client: u16,
+        tx: u32,
+    },
+    Chargeback {
+        client: u16,
+        tx: u32,
+    },
+    GetState {
+        tx: oneshot::Sender<Vec<State>>, // todo: return a stream instead
+    },
 }
 
 fn account(accounts: &mut Accounts, client: u16) -> &mut Account {
@@ -56,19 +75,19 @@ async fn handle(msg: Message, accounts: &mut Accounts, tx_err: &mpsc::Sender<Err
     let res = match msg {
         Deposit { client, tx, amount } => account(accounts, client)
             .deposit(tx, amount)
-            .map_err(Error::TransactionError),
+            .map_err(|err| Error::TransactionError { client, err }),
         Withdrawal { client, tx, amount } => account(accounts, client)
             .withdraw(tx, amount)
-            .map_err(Error::TransactionError),
+            .map_err(|err| Error::TransactionError { client, err }),
         Dispute { client, tx } => account(accounts, client)
             .dispute(tx)
-            .map_err(Error::TransactionError),
+            .map_err(|err| Error::TransactionError { client, err }),
         Resolve { client, tx } => account(accounts, client)
             .resolve(tx)
-            .map_err(Error::TransactionError),
+            .map_err(|err| Error::TransactionError { client, err }),
         Chargeback { client, tx } => account(accounts, client)
             .chargeback(tx)
-            .map_err(Error::TransactionError),
+            .map_err(|err| Error::TransactionError { client, err }),
         GetState { tx } => {
             if tx.send(state(accounts)).is_err() {
                 Err(Error::IoError())
@@ -90,7 +109,7 @@ pub async fn run() -> (mpsc::Sender<Message>, mpsc::Receiver<Error>) {
 
     tokio::spawn(async move {
         while let Some(msg) = rx_msg.recv().await {
-            println!("got = {:?}", msg);
+            // println!("got = {:?}", msg);
             handle(msg, &mut accounts, &tx_err).await;
         }
     });
