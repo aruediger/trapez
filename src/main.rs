@@ -1,39 +1,78 @@
+/**
+ * The CLI interface for the transaction processor.
+ *
+ * Currently supported input is a CSV file name but additional sources can be added. (See comments.)
+ *
+ * Reading the CSV file continues despite any deserialization errors. The only fatal errors are when the
+ * input file can't be read or forwarding messages to processor fails.
+ */
 mod account;
 mod amount;
 mod processor;
-mod serde_str;
 
-use amount::Amount;
 use serde::{self, Deserialize, Serialize};
-use serde_str::StringSerialized;
-use tokio::sync::oneshot;
+use std::fmt;
+use tokio::sync::{
+    mpsc::error::SendError,
+    oneshot::{self, error::RecvError},
+};
 
+#[derive(thiserror::Error)]
+enum Error {
+    #[error("Deserialization error: `{0}`.")]
+    De(csv::Error),
+    #[error("Serialization error: `{0}`.")]
+    Ser(csv::Error),
+    #[error("Input error: `{0}`.")]
+    Input(String),
+    #[error("Send error: `{0}`.")]
+    Send(SendError<processor::Message>),
+    #[error("Receive state error: `{0}`.")]
+    RecvState(RecvError),
+    #[error("IO error: `{0}`.")]
+    Io(std::io::Error),
+    #[error("Wrong number of command line arguments. Filename expected.")]
+    Args,
+}
+
+// Used by default when the main function returns Err.
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self, f)?;
+        Ok(())
+    }
+}
+
+// CSV structure of the input file
 #[derive(Debug, Deserialize)]
 struct Input {
     #[serde(alias = "type")]
     type_: String,
     client: u16,
     tx: u32,
-    amount: Option<StringSerialized<Amount>>,
+    #[serde(with = "amount")]
+    amount: Option<i64>,
 }
 
-// csv doesn't support internally tagged unions :( https://github.com/BurntSushi/rust-csv/issues/211
+// The csv crate doesn't support internally tagged unions :( (https://github.com/BurntSushi/rust-csv/issues/211)
 impl TryFrom<Input> for processor::Message {
-    type Error = String;
+    type Error = Error;
 
-    fn try_from(i: Input) -> Result<Self, Self::Error> {
+    fn try_from(i: Input) -> std::result::Result<Self, Self::Error> {
         match i.type_.as_str() {
             "deposit" => Ok(processor::Message::Deposit {
                 client: i.client,
                 tx: i.tx,
-                amount: i.amount.ok_or("missing amount for deposit")?.0 .0,
-                // .and_then(parse_amount)?,
+                amount: i
+                    .amount
+                    .ok_or_else(|| Error::Input("missing amount for deposit".to_string()))?,
             }),
             "withdrawal" => Ok(processor::Message::Withdrawal {
                 client: i.client,
                 tx: i.tx,
-                amount: i.amount.ok_or("missing amount for withdrawal")?.0 .0,
-                // .and_then(parse_amount)?,
+                amount: i
+                    .amount
+                    .ok_or_else(|| Error::Input("missing amount for deposit".to_string()))?,
             }),
             "dispute" => Ok(processor::Message::Dispute {
                 client: i.client,
@@ -47,65 +86,84 @@ impl TryFrom<Input> for processor::Message {
                 client: i.client,
                 tx: i.tx,
             }),
-            _ => Err(format!("invalid input type: {}", i.type_)),
+            _ => Err(Error::Input(format!("invalid input type: '{}'", i.type_))),
         }
     }
 }
 
+//CSV structure of the output file
 #[derive(Debug, Serialize)]
 struct Output {
     client: u16,
-    available: StringSerialized<Amount>,
-    held: StringSerialized<Amount>,
-    total: StringSerialized<Amount>,
+    #[serde(with = "amount")]
+    available: i64,
+    #[serde(with = "amount")]
+    held: i64,
+    #[serde(with = "amount")]
+    total: i64,
     locked: bool,
 }
 
+fn read_csv(path: &String) -> Result<impl Iterator<Item = processor::Message>, Error> {
+    let reader = csv::ReaderBuilder::new()
+        .trim(csv::Trim::All)
+        .from_path(path)
+        .map_err(Error::De)?;
+    let inputs = reader
+        .into_deserialize::<Input>()
+        .filter_map(|res_input| res_input.map_err(|e| eprintln!("{}", Error::De(e))).ok());
+    let messages = inputs
+        .map(TryInto::try_into)
+        .filter_map(|res_msg| res_msg.map_err(|e| eprintln!("{}", e)).ok());
+    Ok(messages)
+}
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Error> {
+    // Poor man's cmd line parsing. Might use a lib instead.
+    let args: Vec<_> = std::env::args().collect();
+    let csv_file = args.get(1).ok_or(Error::Args)?;
+
+    // Create the processor and the get send and receive handles for transaction messages
+    // and errors.
     let (tx_msg, mut rx_err) = processor::run().await;
 
     tokio::spawn(async move {
         while let Some(res) = rx_err.recv().await {
-            eprintln!("{:?}", res);
+            eprintln!("{}", res); // log transaction errors to stderr
         }
     });
 
-    let mut rdr = csv::ReaderBuilder::new()
-        .trim(csv::Trim::All)
-        .from_path("foo.csv")
-        .unwrap(); // fixme
-    for result in rdr.deserialize() {
-        // println!(">>> {:?}", result);
-        let record: Input = result.unwrap(); // fixme
-        let msg: processor::Message = record.try_into().unwrap(); // fixme
-        tx_msg.send(msg).await.unwrap(); // fixme
+    // Send transaction messages extracted from the CSV file to the transaction processor.
+    // Additional sources can by added by replicating this pattern and running the message
+    // producers in dedicated threads.
+    let tx_csv = tx_msg.clone();
+    for csv_msg in read_csv(csv_file)? {
+        tx_csv.send(csv_msg).await.map_err(Error::Send)?;
     }
+    drop(tx_csv);
 
-    let (tx, rx) = oneshot::channel();
-    let _ = tx_msg.send(processor::Message::GetState { tx }).await;
-    if let Ok(state) = rx.await {
-        let mut wtr = csv::Writer::from_writer(std::io::stdout());
-        for s in state {
-            let processor::State {
-                client,
-                available,
-                held,
-                total,
-                locked,
-            } = s;
-            wtr.serialize(Output {
-                client,
-                available: StringSerialized(Amount(available)),
-                held: StringSerialized(Amount(held)),
-                total: StringSerialized(Amount(total)),
-                locked,
+    // Finally request the state of the transaction processor.
+    let (tx_state, rx_state) = oneshot::channel();
+    tx_msg
+        .send(processor::Message::GetState { tx: tx_state })
+        .await
+        .map_err(Error::Send)?;
+    let state = rx_state.await.map_err(Error::RecvState)?;
+    let mut wtr = csv::Writer::from_writer(std::io::stdout());
+    for s in state {
+        if let Err(err) = wtr
+            .serialize(Output {
+                client: s.client,
+                available: s.available,
+                held: s.held,
+                total: s.total,
+                locked: s.locked,
             })
-            .unwrap(); // fixme
+            .map_err(Error::Ser)
+        {
+            eprintln!("{}", err);
         }
-        wtr.flush().unwrap(); // fixme
-                              // println!("state = {:?}", s);
-    } else {
-        eprintln!("the sender dropped");
     }
+    wtr.flush().map_err(Error::Io)
 }

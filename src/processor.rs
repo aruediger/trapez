@@ -5,10 +5,12 @@ use tokio::sync::{mpsc, oneshot};
 
 type Accounts = BTreeMap<u16, Account>;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("Transaction error for client {client}: `{err}`.")]
     TransactionError { client: u16, err: account::Error },
-    IoError(),
+    #[error("Error sending state result.")]
+    SendError(),
 }
 
 #[derive(Debug)]
@@ -45,12 +47,12 @@ pub enum Message {
         tx: u32,
     },
     GetState {
-        tx: oneshot::Sender<Vec<State>>, // todo: return a stream instead
+        tx: oneshot::Sender<Vec<State>>, // Return a stream instead?
     },
 }
 
 fn account(accounts: &mut Accounts, client: u16) -> &mut Account {
-    // todo use `or_insert` once stable
+    // use `or_insert` once stable
     match accounts.entry(client) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => entry.insert(Account::new()),
@@ -90,7 +92,7 @@ async fn handle(msg: Message, accounts: &mut Accounts, tx_err: &mpsc::Sender<Err
             .map_err(|err| Error::TransactionError { client, err }),
         GetState { tx } => {
             if tx.send(state(accounts)).is_err() {
-                Err(Error::IoError())
+                Err(Error::SendError())
             } else {
                 Ok(())
             }
@@ -109,7 +111,6 @@ pub async fn run() -> (mpsc::Sender<Message>, mpsc::Receiver<Error>) {
 
     tokio::spawn(async move {
         while let Some(msg) = rx_msg.recv().await {
-            // println!("got = {:?}", msg);
             handle(msg, &mut accounts, &tx_err).await;
         }
     });

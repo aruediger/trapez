@@ -3,27 +3,25 @@ use std::collections::{
     BTreeSet,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
+    #[error("Transaction {0} already exists.")]
     TransactionAlreadyExists(u32),
+    #[error("Transaction {0} was not found.")]
     TransactionUnknown(u32),
+    #[error("Transaction {0} is not disputed.")]
     TransactionUndisputed(u32),
+    #[error("Transaction {0} is already disputed.")]
     TransactionAlreadyDisputed(u32),
-    InsufficientFunds,
+    #[error("Insufficient funds (requested: {requested}, available: {available}).")]
+    InsufficientFunds { requested: i64, available: i64 },
+    #[error("Negative amount.")]
     NegativeAmount(i64),
+    #[error("The account is currently locked.")]
     Locked,
 }
 
-impl std::error::Error for Error {}
-
 pub type Result = std::result::Result<(), Error>;
-
-// Could alternatively use ThisError crate
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Error!") // fixme
-    }
-}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Account {
@@ -117,7 +115,10 @@ impl Account {
         if self.available < amount {
             // If a client does not have sufficient available funds the withdrawal should fail and
             // the total amount of funds should not change
-            return Err(Error::InsufficientFunds);
+            return Err(Error::InsufficientFunds {
+                available: self.available,
+                requested: amount,
+            });
         }
         self.tx(tx, -amount)
     }
@@ -282,7 +283,10 @@ mod tests {
         );
         assert_eq!(
             account.withdraw(2, 3).unwrap_err(),
-            Error::InsufficientFunds
+            Error::InsufficientFunds {
+                requested: 3,
+                available: 2
+            }
         );
 
         assert_eq!(

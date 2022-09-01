@@ -1,87 +1,134 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serializer};
 
 const NUM_DIGITS: usize = 4;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Amount(pub i64);
-
-impl std::fmt::Display for Amount {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut s = self.0.to_string();
-        if s.len() <= NUM_DIGITS {
-            let pad = NUM_DIGITS + 1 - s.len();
-            s.insert_str(0, "0".repeat(pad).as_str());
-        }
-        s.insert(s.len() - NUM_DIGITS, '.');
-        write!(f, "{}", s)
+pub fn serialize<S>(amount: &i64, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut str = amount.to_string();
+    if str.len() <= NUM_DIGITS {
+        let pad = NUM_DIGITS + 1 - str.len();
+        str.insert_str(0, "0".repeat(pad).as_str());
     }
+    str.insert(str.len() - NUM_DIGITS, '.');
+    s.serialize_str(str.as_str())
 }
 
-impl std::str::FromStr for Amount {
-    type Err = &'static str;
+pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: Option<&str> = Deserialize::deserialize(deserializer)?;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut s = s.to_string();
-
-        let pad_digits = if let Some(dec_pos) = s.rfind('.') {
-            s.replace_range(dec_pos..dec_pos + 1, "");
-            s.len() - dec_pos
-        } else {
-            0
-        };
-        if pad_digits > NUM_DIGITS {
-            // trim
-            s.replace_range(s.len() - (pad_digits - NUM_DIGITS)..s.len(), "")
-        } else {
-            // pad
-            let pad = "0".repeat(NUM_DIGITS - pad_digits);
-            s.push_str(pad.as_str());
-        }
-        s.parse::<i64>()
-            .map_err(|_| "invalid amount")
-            // .and_then(|res| {
-            //     if res < 0 {
-            //         Err("amount must be positive")
-            //     } else {
-            //         Ok(res)
-            //     }
-            // })
-            .map(Amount)
+    if s.is_none() {
+        return Ok(None);
     }
+
+    let mut s = s.unwrap().to_string();
+    let pad_digits = if let Some(dec_pos) = s.rfind('.') {
+        // remove '.'
+        s.replace_range(dec_pos..dec_pos + 1, "");
+        s.len() - dec_pos
+    } else {
+        0
+    };
+    if pad_digits > NUM_DIGITS {
+        // trim
+        s.replace_range(s.len() - (pad_digits - NUM_DIGITS)..s.len(), "")
+    } else {
+        // pad
+        let pad = "0".repeat(NUM_DIGITS - pad_digits);
+        s.push_str(pad.as_str());
+    }
+    s.parse::<i64>().map(Some).map_err(serde::de::Error::custom)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn assert_parse(s: &str, a: i64) {
-        assert_eq!(s.parse::<Amount>().unwrap(), Amount(a));
+    use serde::Serialize;
+    use serde_test::{assert_de_tokens, assert_de_tokens_error, assert_ser_tokens, Token};
+
+    #[derive(Debug, Deserialize, PartialEq, Eq)]
+    struct In {
+        #[serde(with = "super")]
+        value: Option<i64>,
     }
 
-    fn assert_string(a: i64, s: &str) {
-        assert_eq!(Amount(a).to_string(), s)
+    #[derive(Debug, Serialize, PartialEq, Eq)]
+    struct Out {
+        #[serde(with = "super")]
+        value: i64,
+    }
+
+    fn assert_de(s: &'static str, value: Option<i64>) {
+        if value.is_some() {
+            assert_de_tokens(
+                &In { value },
+                &[
+                    Token::Struct { name: "In", len: 1 },
+                    Token::Str("value"),
+                    Token::Some,
+                    Token::BorrowedStr(s),
+                    Token::StructEnd,
+                ],
+            );
+        } else {
+            assert_de_tokens(
+                &In { value },
+                &[
+                    Token::Struct { name: "In", len: 1 },
+                    Token::Str("value"),
+                    Token::None,
+                    Token::StructEnd,
+                ],
+            );
+        };
     }
 
     #[test]
-    fn amount_parse() {
-        assert_parse("1", 10000);
-        assert_parse("1.0", 10000);
-        assert_parse("1.1234", 11234);
-        assert_parse("1.12345", 11234);
-        assert_eq!(
-            "1n".parse::<Amount>().unwrap_err(),
-            "invalid amount".to_owned()
+    fn de() {
+        assert_de("1", Some(10000));
+        assert_de("1.0", Some(10000));
+        assert_de("1.1234", Some(11234));
+        assert_de("1.12345", Some(11234));
+        assert_de("-1.12345", Some(-11234));
+        assert_de("", None);
+
+        assert_de_tokens_error::<In>(
+            &[
+                Token::Struct { name: "In", len: 1 },
+                Token::Str("value"),
+                Token::Some,
+                Token::BorrowedStr("x"),
+                Token::StructEnd,
+            ],
+            "invalid digit found in string",
         );
-        // assert_eq!(
-        //     "-1".parse::<Amount>().unwrap_err(),
-        //     "amount must be positive".to_owned()
-        // );
+    }
+
+    fn assert_ser(value: i64, s: &'static str) {
+        assert_ser_tokens(
+            &Out { value },
+            &[
+                Token::Struct {
+                    name: "Out",
+                    len: 1,
+                },
+                Token::Str("value"),
+                Token::BorrowedStr(s),
+                Token::StructEnd,
+            ],
+        )
     }
 
     #[test]
-    fn amount_to_string() {
-        assert_string(0, "0.0000");
-        assert_string(10, "0.0010");
-        assert_string(10000, "1.0000");
+    fn ser() {
+        assert_ser(0, "0.0000");
+        assert_ser(10, "0.0010");
+        assert_ser(10000, "1.0000");
+        assert_ser(-10000, "-1.0000");
     }
 }
