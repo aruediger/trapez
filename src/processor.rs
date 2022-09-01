@@ -3,8 +3,6 @@ use std::collections::btree_map::{BTreeMap, Entry};
 use crate::account::{self, Account};
 use tokio::sync::{mpsc, oneshot};
 
-type Accounts = BTreeMap<u16, Account>;
-
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Transaction error for client {client}: `{err}`.")]
@@ -51,55 +49,62 @@ pub enum Message {
     },
 }
 
-fn account(accounts: &mut Accounts, client: u16) -> &mut Account {
-    // use `or_insert` once stable
-    match accounts.entry(client) {
-        Entry::Occupied(entry) => entry.into_mut(),
-        Entry::Vacant(entry) => entry.insert(Account::new()),
-    }
+struct Processor {
+    accounts: BTreeMap<u16, Account>,
 }
 
-fn state(accounts: &Accounts) -> Vec<State> {
-    accounts
-        .iter()
-        .map(|(client, account)| State {
-            client: *client,
-            available: account.available,
-            held: account.held,
-            total: account.total(),
-            locked: account.locked,
-        })
-        .collect()
-}
-
-async fn handle(msg: Message, accounts: &mut Accounts, tx_err: &mpsc::Sender<Error>) {
-    use Message::*;
-    let res = match msg {
-        Deposit { client, tx, amount } => account(accounts, client)
-            .deposit(tx, amount)
-            .map_err(|err| Error::TransactionError { client, err }),
-        Withdrawal { client, tx, amount } => account(accounts, client)
-            .withdraw(tx, amount)
-            .map_err(|err| Error::TransactionError { client, err }),
-        Dispute { client, tx } => account(accounts, client)
-            .dispute(tx)
-            .map_err(|err| Error::TransactionError { client, err }),
-        Resolve { client, tx } => account(accounts, client)
-            .resolve(tx)
-            .map_err(|err| Error::TransactionError { client, err }),
-        Chargeback { client, tx } => account(accounts, client)
-            .chargeback(tx)
-            .map_err(|err| Error::TransactionError { client, err }),
-        GetState { tx } => {
-            if tx.send(state(accounts)).is_err() {
-                Err(Error::SendError())
-            } else {
-                Ok(())
-            }
+impl Processor {
+    fn new() -> Processor {
+        Self {
+            accounts: BTreeMap::new(),
         }
-    };
-    if let Err(err) = res {
-        let _ = tx_err.send(err).await;
+    }
+
+    fn tx<F>(&mut self, client: u16, mut f: F) -> Result<(), Error>
+    where
+        F: FnMut(&mut Account) -> Result<(), account::Error>,
+    {
+        // use `or_insert` once stable
+        let account = match self.accounts.entry(client) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(Account::new()),
+        };
+        f(account).map_err(|err| Error::TransactionError { client, err })
+    }
+
+    async fn handle(&mut self, msg: Message, tx_err: &mpsc::Sender<Error>) {
+        use Message::*;
+
+        let res = match msg {
+            Deposit { client, tx, amount } => self.tx(client, |a| a.deposit(tx, amount)),
+            Withdrawal { client, tx, amount } => self.tx(client, |a| a.withdraw(tx, amount)),
+            Dispute { client, tx } => self.tx(client, |a| a.dispute(tx)),
+            Resolve { client, tx } => self.tx(client, |a| a.resolve(tx)),
+            Chargeback { client, tx } => self.tx(client, |a| a.chargeback(tx)),
+            GetState { tx } => {
+                if tx.send(self.state()).is_err() {
+                    Err(Error::SendError())
+                } else {
+                    Ok(())
+                }
+            }
+        };
+        if let Err(err) = res {
+            let _ = tx_err.send(err).await;
+        }
+    }
+
+    fn state(&self) -> Vec<State> {
+        self.accounts
+            .iter()
+            .map(|(client, account)| State {
+                client: *client,
+                available: account.available,
+                held: account.held,
+                total: account.total(),
+                locked: account.locked,
+            })
+            .collect()
     }
 }
 
@@ -107,11 +112,10 @@ pub async fn run() -> (mpsc::Sender<Message>, mpsc::Receiver<Error>) {
     let (tx_msg, mut rx_msg) = mpsc::channel(100);
     let (tx_err, rx_err) = mpsc::channel(100);
 
-    let mut accounts = BTreeMap::new();
-
     tokio::spawn(async move {
+        let mut processor = Processor::new();
         while let Some(msg) = rx_msg.recv().await {
-            handle(msg, &mut accounts, &tx_err).await;
+            processor.handle(msg, &tx_err).await;
         }
     });
 
