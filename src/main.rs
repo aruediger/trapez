@@ -46,8 +46,7 @@ impl fmt::Debug for Error {
 // CSV structure of the input file
 #[derive(Debug, Deserialize)]
 struct Input {
-    #[serde(alias = "type")]
-    type_: String,
+    r#type: String,
     client: u16,
     tx: u32,
     #[serde(with = "amount")]
@@ -59,7 +58,7 @@ impl TryFrom<Input> for processor::Message {
     type Error = Error;
 
     fn try_from(i: Input) -> std::result::Result<Self, Self::Error> {
-        match i.type_.as_str() {
+        match i.r#type.as_str() {
             "deposit" => Ok(processor::Message::Deposit {
                 client: i.client,
                 tx: i.tx,
@@ -86,7 +85,7 @@ impl TryFrom<Input> for processor::Message {
                 client: i.client,
                 tx: i.tx,
             }),
-            _ => Err(Error::Input(format!("invalid input type: '{}'", i.type_))),
+            _ => Err(Error::Input(format!("invalid input type: '{}'", i.r#type))),
         }
     }
 }
