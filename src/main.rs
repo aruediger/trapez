@@ -91,7 +91,7 @@ impl TryFrom<Input> for processor::Message {
     }
 }
 
-//CSV structure of the output file
+// CSV structure of the output file
 #[derive(Debug, Serialize)]
 struct Output {
     client: u16,
@@ -109,11 +109,9 @@ fn read_csv(path: &String) -> Result<impl Iterator<Item = processor::Message>, E
         .trim(csv::Trim::All)
         .from_path(path)
         .map_err(Error::De)?;
-    let inputs = reader
+    let messages = reader
         .into_deserialize::<Input>()
-        .filter_map(|res_input| res_input.map_err(|e| eprintln!("{}", Error::De(e))).ok());
-    let messages = inputs
-        .map(TryInto::try_into)
+        .map(|res_input| res_input.map_err(Error::De).and_then(TryInto::try_into))
         .filter_map(|res_msg| res_msg.map_err(|e| eprintln!("{}", e)).ok());
     Ok(messages)
 }
