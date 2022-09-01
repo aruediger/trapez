@@ -65,6 +65,14 @@ impl Account {
         }
     }
 
+    fn chk_lock(&self) -> Result {
+        if self.locked {
+            Err(Error::Locked)
+        } else {
+            Ok(())
+        }
+    }
+
     /**
      * The total funds that are available or held.
      */
@@ -90,9 +98,7 @@ impl Account {
      * Although the amount type is signed we only allow positive values.
      */
     pub fn deposit(&mut self, tx: u32, amount: i64) -> Result {
-        if self.locked {
-            return Err(Error::Locked);
-        }
+        self.chk_lock()?;
         if amount < 0 {
             return Err(Error::NegativeAmount(amount));
         }
@@ -106,9 +112,7 @@ impl Account {
      * Although the amount type is signed we only allow positive values.
      */
     pub fn withdraw(&mut self, tx: u32, amount: i64) -> Result {
-        if self.locked {
-            return Err(Error::Locked);
-        }
+        self.chk_lock()?;
         if amount < 0 {
             return Err(Error::NegativeAmount(amount));
         }
@@ -128,9 +132,7 @@ impl Account {
      * reversed. The transaction shouldn't be reversed yet but the associated funds should be held.
      */
     pub fn dispute(&mut self, tx: u32) -> Result {
-        if self.locked {
-            return Err(Error::Locked);
-        }
+        self.chk_lock()?;
         match self.log.entry(tx) {
             Entry::Vacant(_) => Err(Error::TransactionUnknown(tx)),
             Entry::Occupied(entry) => {
@@ -153,9 +155,7 @@ impl Account {
      * A resolve represents a resolution to a dispute, releasing the associated held funds.
      */
     pub fn resolve(&mut self, tx: u32) -> Result {
-        if self.locked {
-            return Err(Error::Locked);
-        }
+        self.chk_lock()?;
         match self.log.entry(tx) {
             Entry::Vacant(_) => Err(Error::TransactionUnknown(tx)),
             Entry::Occupied(entry) => {
@@ -176,9 +176,7 @@ impl Account {
     }
 
     pub fn chargeback(&mut self, tx: u32) -> Result {
-        if self.locked {
-            return Err(Error::Locked);
-        }
+        self.chk_lock()?;
         match self.log.entry(tx) {
             Entry::Vacant(_) => Err(Error::TransactionUnknown(tx)),
             Entry::Occupied(entry) => {
