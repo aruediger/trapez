@@ -6,9 +6,11 @@ use tokio::sync::{mpsc, oneshot};
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Transaction error for client {client}: `{err}`.")]
-    TransactionError { client: u16, err: account::Error },
+    Transaction { client: u16, err: account::Error },
+    #[error("Client '{0}' not found.")]
+    UnknownClient(u16),
     #[error("Error sending state result.")]
-    SendError(),
+    Send(),
 }
 
 #[derive(Debug)]
@@ -60,30 +62,36 @@ impl Processor {
         }
     }
 
-    fn tx<F>(&mut self, client: u16, mut f: F) -> Result<(), Error>
+    fn tx<F>(&mut self, client: u16, create: bool, mut f: F) -> Result<(), Error>
     where
         F: FnMut(&mut Account) -> Result<(), account::Error>,
     {
         // use `or_insert` once stable
         let account = match self.accounts.entry(client) {
             Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => entry.insert(Account::new()),
+            Entry::Vacant(entry) => {
+                if create {
+                    entry.insert(Account::new())
+                } else {
+                    Err(Error::UnknownClient(client))?
+                }
+            }
         };
-        f(account).map_err(|err| Error::TransactionError { client, err })
+        f(account).map_err(|err| Error::Transaction { client, err })
     }
 
     async fn handle(&mut self, msg: Message, tx_err: &mpsc::Sender<Error>) {
         use Message::*;
 
         let res = match msg {
-            Deposit { client, tx, amount } => self.tx(client, |a| a.deposit(tx, amount)),
-            Withdrawal { client, tx, amount } => self.tx(client, |a| a.withdraw(tx, amount)),
-            Dispute { client, tx } => self.tx(client, |a| a.dispute(tx)),
-            Resolve { client, tx } => self.tx(client, |a| a.resolve(tx)),
-            Chargeback { client, tx } => self.tx(client, |a| a.chargeback(tx)),
+            Deposit { client, tx, amount } => self.tx(client, true, |a| a.deposit(tx, amount)),
+            Withdrawal { client, tx, amount } => self.tx(client, true, |a| a.withdraw(tx, amount)),
+            Dispute { client, tx } => self.tx(client, false, |a| a.dispute(tx)),
+            Resolve { client, tx } => self.tx(client, false, |a| a.resolve(tx)),
+            Chargeback { client, tx } => self.tx(client, false, |a| a.chargeback(tx)),
             GetState { tx } => {
                 if tx.send(self.state()).is_err() {
-                    Err(Error::SendError())
+                    Err(Error::Send())
                 } else {
                     Ok(())
                 }
