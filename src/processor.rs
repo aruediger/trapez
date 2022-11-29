@@ -85,7 +85,7 @@ impl Processor {
 
         let res = match msg {
             Deposit { client, tx, amount } => self.tx(client, true, |a| a.deposit(tx, amount)),
-            Withdrawal { client, tx, amount } => self.tx(client, true, |a| a.withdraw(tx, amount)),
+            Withdrawal { client, tx, amount } => self.tx(client, false, |a| a.withdraw(tx, amount)),
             Dispute { client, tx } => self.tx(client, false, |a| a.dispute(tx)),
             Resolve { client, tx } => self.tx(client, false, |a| a.resolve(tx)),
             Chargeback { client, tx } => self.tx(client, false, |a| a.chargeback(tx)),
