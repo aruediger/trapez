@@ -28,7 +28,7 @@ where
     let mut s = s.unwrap().to_string();
     let pad_digits = if let Some(dec_pos) = s.rfind('.') {
         // remove '.'
-        s.replace_range(dec_pos..dec_pos + 1, "");
+        s.replace_range(dec_pos..=dec_pos, "");
         s.len() - dec_pos
     } else {
         0
