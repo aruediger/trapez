@@ -66,7 +66,6 @@ impl Processor {
     where
         F: FnMut(&mut Account) -> Result<(), account::Error>,
     {
-        // use `or_insert` once stable
         let account = match self.accounts.entry(client) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
@@ -89,13 +88,7 @@ impl Processor {
             Dispute { client, tx } => self.tx(client, false, |a| a.dispute(tx)),
             Resolve { client, tx } => self.tx(client, false, |a| a.resolve(tx)),
             Chargeback { client, tx } => self.tx(client, false, |a| a.chargeback(tx)),
-            GetState { tx } => {
-                if tx.send(self.state()).is_err() {
-                    Err(Error::Send())
-                } else {
-                    Ok(())
-                }
-            }
+            GetState { tx } => tx.send(self.state()).map_err(|_| Error::Send()),
         };
         if let Err(err) = res {
             let _ = tx_err.send(err).await;

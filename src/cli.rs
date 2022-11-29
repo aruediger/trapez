@@ -81,7 +81,7 @@ impl TryFrom<Input> for processor::Message {
                 client: i.client,
                 tx: i.tx,
             }),
-            _ => Err(Error::Input(format!("invalid input type: '{}'", i.r#type))),
+            unknown => Err(Error::Input(format!("invalid input type: '{unknown}'"))),
         }
     }
 }
@@ -106,7 +106,7 @@ fn read_csv<R: std::io::Read>(reader: R) -> impl Iterator<Item = processor::Mess
     reader
         .into_deserialize::<Input>()
         .map(|res_input| res_input.map_err(Error::De).and_then(TryInto::try_into))
-        .filter_map(|res_msg| res_msg.map_err(|e| eprintln!("{}", e)).ok())
+        .filter_map(|res_msg| res_msg.map_err(|err| eprintln!("{err}")).ok())
 }
 
 pub async fn run<R: std::io::Read, W: std::io::Write>(reader: R, writer: W) -> Result<(), Error> {
@@ -116,7 +116,7 @@ pub async fn run<R: std::io::Read, W: std::io::Write>(reader: R, writer: W) -> R
 
     tokio::spawn(async move {
         while let Some(res) = rx_err.recv().await {
-            eprintln!("{}", res); // log transaction errors to stderr
+            eprintln!("{res}"); // log transaction errors to stderr
         }
     });
 
@@ -148,7 +148,7 @@ pub async fn run<R: std::io::Read, W: std::io::Write>(reader: R, writer: W) -> R
             })
             .map_err(Error::Ser)
         {
-            eprintln!("{}", err);
+            eprintln!("{err}");
         }
     }
     wtr.flush().map_err(Error::Io)
