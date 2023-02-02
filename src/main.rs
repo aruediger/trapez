@@ -17,6 +17,6 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     let args = Args::try_parse()?;
     let file = File::open(args.file_path)?;
-    let _ = cli::run(file, stdout()).await?;
+    cli::run(file, stdout()).await?;
     Ok(())
 }
